@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard</title>
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <img src="../logo.svg" alt="Logo">
+        <span>TM Admin</span>
+      </div>
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-view="overview">
+          <svg viewBox="0 0 24 24"><path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-4H4zM14 8h6V4h-6z"/></svg>
+          <span>Overview</span>
+        </button>
+        <button class="nav-item" data-view="events">
+          <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>
+          <span>Events</span>
+        </button>
+        <button class="nav-item" data-view="orders">
+          <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M15 6v12"/></svg>
+          <span>Orders &amp; Tickets</span>
+          <span class="nav-count" id="count-orders">0</span>
+        </button>
+        <button class="nav-item" data-view="confirmed">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>
+          <span>Confirmed Tickets</span>
+          <span class="nav-count" id="count-confirmed">0</span>
+        </button>
+        <button class="nav-item" data-view="payments">
+          <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M7 15h4"/></svg>
+          <span>Payments</span>
+          <span class="nav-count" id="count-proofs">0</span>
+        </button>
+        <button class="nav-item" data-view="admins" id="nav-admins" hidden>
+          <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0"/><path d="M17 8h4M19 6v4"/></svg>
+          <span>Admins</span>
+        </button>
+        <button class="nav-item" data-view="account">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6"/></svg>
+          <span>My Account</span>
+        </button>
+      </nav>
+      <div class="sidebar-user">
+        <div class="who" id="user-name">&nbsp;</div>
+        <div class="role" id="user-role">&nbsp;</div>
+        <button class="btn ghost small block" id="logout-btn">Sign out</button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <div style="display:flex;align-items:center">
+          <button class="menu-toggle" id="menu-toggle" aria-label="Menu">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 7h16M4 12h16M4 17h16" stroke="#111827" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <div>
+            <h1 id="view-title">Overview</h1>
+            <div class="sub" id="view-sub">Your ticketing at a glance</div>
+          </div>
+        </div>
+        <div class="actions" id="view-actions"></div>
+      </header>
+
+      <div class="content">
+        <section class="section active" id="view-overview">
+          <div class="stat-grid" id="stat-grid"></div>
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Recent orders</h3>
+              <button class="btn ghost small" data-goto="orders">View all</button>
+            </div>
+            <div class="table-wrap" id="overview-orders"></div>
+          </div>
+        </section>
+
+        <section class="section" id="view-events">
+          <div class="section-head">
+            <div>
+              <h2>Events</h2>
+              <p>Create and manage the events you sell tickets for.</p>
+            </div>
+            <div class="actions">
+              <button class="btn" id="add-event-btn">New event</button>
+            </div>
+          </div>
+          <div id="events-list"></div>
+        </section>
+
+        <section class="section" id="view-orders">
+          <div class="section-head">
+            <div>
+              <h2>Orders &amp; Tickets</h2>
+              <p>Issue tickets, email clients and track confirmations.</p>
+            </div>
+            <div class="actions">
+              <button class="btn" id="add-order-btn">New order</button>
+            </div>
+          </div>
+          <div class="filters" id="order-filters" style="margin-bottom:16px">
+            <button class="chip active" data-filter="all">All</button>
+            <button class="chip" data-filter="pending">Pending</button>
+            <button class="chip" data-filter="confirmed">Confirmed</button>
+            <button class="chip" data-filter="rejected">Rejected</button>
+            <button class="chip" data-filter="cancelled">Cancelled</button>
+          </div>
+          <div class="panel"><div class="table-wrap" id="orders-list"></div></div>
+        </section>
+
+        <section class="section" id="view-confirmed">
+          <div class="section-head">
+            <div>
+              <h2>Confirmed Tickets</h2>
+              <p id="confirmed-sub">Orders your clients have confirmed.</p>
+            </div>
+          </div>
+          <div class="panel"><div class="table-wrap" id="confirmed-list"></div></div>
+        </section>
+
+        <section class="section" id="view-payments">
+          <div class="section-head">
+            <div>
+              <h2>Payments</h2>
+              <p>Proof of payment uploaded by clients.</p>
+            </div>
+          </div>
+          <div class="panel"><div class="table-wrap" id="payments-list"></div></div>
+        </section>
+
+        <section class="section" id="view-admins">
+          <div class="section-head">
+            <div>
+              <h2>Admins</h2>
+              <p>Create accounts. Each admin only sees the tickets they issue.</p>
+            </div>
+            <div class="actions">
+              <button class="btn" id="add-admin-btn">New admin</button>
+            </div>
+          </div>
+          <div class="panel"><div class="table-wrap" id="admins-list"></div></div>
+        </section>
+
+        <section class="section" id="view-account">
+          <div class="section-head">
+            <div>
+              <h2>My Account</h2>
+              <p>Your profile and agent identifier.</p>
+            </div>
+          </div>
+          <div class="panel" style="max-width:560px">
+            <div class="panel-body">
+              <form id="account-form" autocomplete="off">
+                <div class="field">
+                  <label>Agent identifier</label>
+                  <input id="acc-identifier" type="text" spellcheck="false" placeholder="AGT-XXXX">
+                  <p class="cell-sub">Agents use this code to identify themselves. Choose something hard to guess.</p>
+                </div>
+                <div class="field">
+                  <label>Full name</label>
+                  <input id="acc-name" type="text" required>
+                </div>
+                <div class="field">
+                  <label>Email</label>
+                  <input id="acc-email" type="email" readonly>
+                </div>
+                <div class="field">
+                  <label>Phone</label>
+                  <input id="acc-phone" type="text">
+                </div>
+                <div class="field">
+                  <label>New password (leave blank to keep current)</label>
+                  <input id="acc-password" type="password" placeholder="At least 6 characters">
+                </div>
+                <button class="btn" type="submit">Save changes</button>
+              </form>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="modal-box" id="modal-box">
+      <div class="modal-head">
+        <h3 id="modal-title">Title</h3>
+        <button class="modal-close" id="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-foot" id="modal-foot"></div>
+    </div>
+  </div>
+
+  <div class="toast-wrap" id="toasts"></div>
+
+  <script src="../store.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

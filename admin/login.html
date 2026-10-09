@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Login</title>
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <div class="login-wrap">
+    <form class="login-card" id="login-form" autocomplete="off">
+      <div class="login-brand">
+        <img src="../logo.svg" alt="Logo">
+        <span>Admin Portal</span>
+      </div>
+      <h1 class="login-title">Sign in</h1>
+      <p class="login-sub">Access your events, tickets and confirmed orders.</p>
+
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" type="email" placeholder="you@example.com" required>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" type="password" placeholder="Your password" required>
+      </div>
+
+      <button class="btn block" type="submit">Sign in</button>
+
+      <div class="login-hint">
+        <strong>Demo super admin</strong><br>
+        Email: <code>admin@ticketmaster.com</code><br>
+        Password: <code>admin123</code><br>
+        <span id="agent-count"></span>
+      </div>
+    </form>
+  </div>
+
+  <script src="../store.js"></script>
+  <script src="login.js"></script>
+</body>
+</html>
