@@ -1,0 +1,16 @@
+{
+  "name": "ticketmaster-email-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Resend email backend for Ticketmaster (deploy on Render)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

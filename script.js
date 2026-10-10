@@ -563,13 +563,22 @@ window.addEventListener('load', async function () {
     }
     var link = TMStore.confirmLink(order.token);
     document.getElementById('transfer-done-title').textContent = 'Transfer sent';
-    document.getElementById('transfer-done-details').textContent =
-      picks.length + ' ' + (picks.length === 1 ? 'ticket' : 'tickets') + ' sent to ' + name + ' (' + email + '). Order ' + order.id +
-      '. When they confirm or decline, it is linked to your account (' + identifiedAdmin.identifier + ').';
+    var doneDetails = document.getElementById('transfer-done-details');
     var linkWrap = document.getElementById('transfer-done-link');
     var linkInput = document.getElementById('transfer-link');
     linkInput.value = link;
-    linkWrap.hidden = false;
+    try {
+      var mail = TMStore.buildEmail(order, ticketViewEvent, identifiedAdmin);
+      await TMStore.sendEmail(email, mail);
+      doneDetails.textContent =
+        picks.length + ' ' + (picks.length === 1 ? 'ticket' : 'tickets') + ' sent to ' + name + ' (' + email + '). We emailed them the confirmation link to view the tickets. Order ' + order.id + '.';
+      linkWrap.hidden = true;
+    } catch (e) {
+      doneDetails.textContent =
+        picks.length + ' ' + (picks.length === 1 ? 'ticket' : 'tickets') + ' sent to ' + name + ' (' + email + '). Order ' + order.id +
+        '. The email could not be sent (' + e.message + '). Share the confirmation link below instead.';
+      linkWrap.hidden = false;
+    }
     showTransferStep('review');
   }
 

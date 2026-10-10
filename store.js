@@ -97,6 +97,28 @@
   }
 
   // ------------------------------------------------------------------
+  // Email sending (Resend backend on Render).
+  // Replace EMAIL_API with your Render service URL after deploying server/.
+  // ------------------------------------------------------------------
+  var EMAIL_API = 'https://YOUR-RENDER-SERVICE-NAME.onrender.com';
+
+  async function sendEmail(to, mail) {
+    var base = String(EMAIL_API || '').replace(/\/+$/, '');
+    if (!base || base.indexOf('YOUR-RENDER') !== -1) {
+      throw new Error('Email sending is not connected yet. Set EMAIL_API in store.js to your Render URL (see server/ folder).');
+    }
+    var res = await fetch(base + '/api/send-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: to, subject: mail.subject, html: mail.html })
+    });
+    var data = null;
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) throw new Error((data && data.error) || 'Email sending failed.');
+    return data;
+  }
+
+  // ------------------------------------------------------------------
   // Image uploads (Cloudinary unsigned upload) - resolves to the secure URL.
   // ------------------------------------------------------------------
   function uploadImage(file) {
@@ -566,13 +588,7 @@
     var tickets = parseSeatList(order.seats);
     var qty = order.quantity || tickets.length || 1;
 
-    var logoSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 120 120">' +
-      '<rect width="120" height="120" fill="none"/>' +
-      '<rect x="8" y="8" width="104" height="104" rx="20" fill="#1a73e8"/>' +
-      '<text x="60" y="82" font-family="Arial,Helvetica,sans-serif" font-size="64" font-weight="700" fill="#ffffff" text-anchor="middle">t</text>' +
-      '</svg>';
-    var logoB64 = 'data:image/svg+xml;base64,' + (typeof btoa !== 'undefined' ? btoa(logoSvg) : '');
+    var logoUrl = baseUrl() + 'logo-email.svg';
 
     var eventCard =
       '<div style="border:1px solid #e5e7eb;border-radius:0;overflow:hidden;margin:0 0 16px">' +
@@ -623,12 +639,10 @@
 
       /* Header card */
       '<div style="border:1px solid #e5e7eb;border-radius:0;padding:14px 24px;margin-bottom:4px;text-align:left;background:#ffffff">' +
-      '<table style="border-collapse:collapse;margin:0"><tr>' +
-      '<td style="vertical-align:middle;padding-right:10px">' +
-      (logoB64 ? '<img src="' + logoB64 + '" alt="" width="36" height="36" style="display:block;border-radius:0">' : '') +
-      '</td>' +
-      '<td style="vertical-align:middle;font-size:18px;font-weight:700;color:#111827">Ticketmaster</td>' +
-      '</tr></table>' +
+      '<div style="line-height:0">' +
+      '<img src="' + logoUrl + '" alt="" width="30" height="30" style="display:inline-block;vertical-align:middle;border:0;border-radius:0;margin:0">' +
+      '<span style="display:inline-block;vertical-align:middle;font-size:18px;font-weight:700;color:#111827;margin-left:6px">ticketmaster</span>' +
+      '</div>' +
       '</div>' +
 
       /* Body card */
@@ -653,12 +667,10 @@
 
       /* Footer card */
       '<div style="border:1px solid #e5e7eb;border-radius:0;padding:20px 24px;background:#f9fafb;text-align:left">' +
-      '<table style="border-collapse:collapse;margin:0"><tr>' +
-      '<td style="vertical-align:middle;padding-right:8px">' +
-      (logoB64 ? '<img src="' + logoB64 + '" alt="" width="24" height="24" style="display:block;border-radius:0">' : '') +
-      '</td>' +
-      '<td style="vertical-align:middle;font-size:14px;font-weight:700;color:#111827">Ticketmaster</td>' +
-      '</tr></table>' +
+      '<div style="line-height:0">' +
+      '<img src="' + logoUrl + '" alt="" width="22" height="22" style="display:inline-block;vertical-align:middle;border:0;border-radius:0;margin:0">' +
+      '<span style="display:inline-block;vertical-align:middle;font-size:14px;font-weight:700;color:#111827;margin-left:5px">ticketmaster</span>' +
+      '</div>' +
       '<div style="text-align:left;margin-top:10px;font-size:12px;color:#9ca3af">' +
       '<a href="#" style="color:#6b7280;text-decoration:none">Help</a>' +
       ' <span style="color:#d1d5db">|</span> ' +
@@ -705,6 +717,7 @@
     formatDate: formatDate,
     nowIso: nowIso,
     uploadImage: uploadImage,
+    sendEmail: sendEmail,
 
     listAdmins: listAdmins,
     getAdmin: getAdmin,
