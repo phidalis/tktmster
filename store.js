@@ -1,22 +1,38 @@
 /*
- * TMStore - shared data layer for the admin dashboard.
+ * TMStore - shared data layer.
  *
- * Everything is persisted in localStorage so the app works with no server.
- * When you are ready to add a real backend + email sending, replace the
- * bodies of these functions with fetch() calls. Nothing else needs to change
- * because the rest of the app only talks to window.TMStore.
+ * Data (admins, events, orders) lives in Firebase Firestore. The public API
+ * is asynchronous: every function that reads or writes Firestore returns a
+ * Promise, so callers use `await TMStore.xxx()`.
+ *
+ * Session and identification are per-browser state (the signed-in admin id),
+ * so they stay in localStorage - only the shared records moved to Firestore.
+ *
+ * `TMStore.ready` resolves once the app has bootstrapped (including first-run
+ * seeding). Every data function awaits it internally, so callers normally do
+ * not need to touch it.
  */
 (function (global) {
-  var KEYS = {
-    admins: 'tm_admins',
-    events: 'tm_events',
-    orders: 'tm_orders',
+  var LOCAL_KEYS = {
     session: 'tm_session',
-    ident: 'tm_ident',
-    seeded: 'tm_seeded_v1'
+    ident: 'tm_ident'
   };
 
-  function read(key, fallback) {
+  var COLLECTIONS = {
+    admins: 'admins',
+    events: 'events',
+    orders: 'orders'
+  };
+
+  var CLOUDINARY = {
+    cloudName: 'vk6zv1bq',
+    uploadPreset: 'ticketmaster'
+  };
+
+  // ------------------------------------------------------------------
+  // Local (per-browser) storage helpers - session + ident only.
+  // ------------------------------------------------------------------
+  function readLocal(key, fallback) {
     try {
       var raw = global.localStorage.getItem(key);
       return raw ? JSON.parse(raw) : fallback;
@@ -25,8 +41,16 @@
     }
   }
 
-  function write(key, value) {
-    global.localStorage.setItem(key, JSON.stringify(value));
+  function writeLocal(key, value) {
+    try {
+      global.localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {}
+  }
+
+  function removeLocal(key) {
+    try {
+      global.localStorage.removeItem(key);
+    } catch (e) {}
   }
 
   function uid(prefix) {
@@ -75,13 +99,63 @@
   }
 
   // ------------------------------------------------------------------
-  // Seed
+  // Image uploads (Cloudinary unsigned upload) - resolves to the secure URL.
   // ------------------------------------------------------------------
+  function uploadImage(file) {
+    return new Promise(function (resolve, reject) {
+      if (!file) { reject(new Error('No file selected')); return; }
+      var url = 'https://api.cloudinary.com/v1_1/' + CLOUDINARY.cloudName + '/image/upload';
+      var form = new FormData();
+      form.append('file', file);
+      form.append('upload_preset', CLOUDINARY.uploadPreset);
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.onload = function () {
+        var res = null;
+        try { res = JSON.parse(xhr.responseText); } catch (e) {}
+        if (xhr.status >= 200 && xhr.status < 300 && res && (res.secure_url || res.url)) {
+          resolve(res.secure_url || res.url);
+        } else {
+          reject(new Error((res && res.error && res.error.message) || 'Image upload failed'));
+        }
+      };
+      xhr.onerror = function () { reject(new Error('Image upload failed')); };
+      xhr.send(form);
+    });
+  }
+
+  function db() {
+    return global.db;
+  }
+
+  function withId(doc) {
+    var data = doc.data() || {};
+    if (data.id == null) data.id = doc.id;
+    return data;
+  }
+
+  function byCreatedDesc(a, b) {
+    return new Date(b.createdAt) - new Date(a.createdAt);
+  }
+
+  // ------------------------------------------------------------------
+  // Bootstrap / seed
+  // ------------------------------------------------------------------
+  var readyPromise = null;
+
+  function ready() {
+    if (!readyPromise) readyPromise = init();
+    return readyPromise;
+  }
+
   function init() {
-    var admins = read(KEYS.admins, []);
-    if (admins.length === 0) {
+    return (async function () {
+      if (!db()) return;
+      var adminsSnap = await db().collection(COLLECTIONS.admins).limit(1).get();
+      if (!adminsSnap.empty) return;
+
       var superAdmin = {
-        id: uid('adm_'),
+        id: 'adm_super',
         name: 'Super Admin',
         email: 'admin@ticketmaster.com',
         pass: hash('admin123'),
@@ -91,16 +165,16 @@
         createdBy: null,
         createdAt: nowIso()
       };
-      admins.push(superAdmin);
-      write(KEYS.admins, admins);
+      await db().collection(COLLECTIONS.admins).doc(superAdmin.id).set(superAdmin);
 
-      // Seed the events that already ship with index.html so they show up
-      // in the admin dashboard ready for editing.
-      if (read(KEYS.events, []).length === 0) {
-        write(KEYS.events, seedEvents(superAdmin.id));
+      var eventsSnap = await db().collection(COLLECTIONS.events).limit(1).get();
+      if (eventsSnap.empty) {
+        var seeds = seedEvents(superAdmin.id);
+        for (var i = 0; i < seeds.length; i++) {
+          await db().collection(COLLECTIONS.events).doc(seeds[i].id).set(seeds[i]);
+        }
       }
-      write(KEYS.orders, read(KEYS.orders, []));
-    }
+    })();
   }
 
   function seedEvents(adminId) {
@@ -163,35 +237,45 @@
   // ------------------------------------------------------------------
   // Admins
   // ------------------------------------------------------------------
-  function listAdmins() {
-    return read(KEYS.admins, []);
+  async function listAdmins() {
+    await ready();
+    var snap = await db().collection(COLLECTIONS.admins).get();
+    return snap.docs.map(withId);
   }
 
-  function getAdmin(id) {
-    return listAdmins().filter(function (a) { return a.id === id; })[0] || null;
+  async function getAdmin(id) {
+    await ready();
+    if (!id) return null;
+    var doc = await db().collection(COLLECTIONS.admins).doc(id).get();
+    return doc.exists ? withId(doc) : null;
   }
 
-  function findAdminByEmail(email) {
+  async function findAdminByEmail(email) {
+    await ready();
     var e = normalizeEmail(email);
-    return listAdmins().filter(function (a) { return a.email === e; })[0] || null;
+    if (!e) return null;
+    var snap = await db().collection(COLLECTIONS.admins).where('email', '==', e).limit(1).get();
+    return snap.empty ? null : withId(snap.docs[0]);
   }
 
-  function getAdminByIdentifier(code) {
+  async function getAdminByIdentifier(code) {
+    await ready();
     var c = String(code || '').trim().toUpperCase();
     if (!c) return null;
-    return listAdmins().filter(function (a) { return String(a.identifier || '').toUpperCase() === c; })[0] || null;
+    var snap = await db().collection(COLLECTIONS.admins).where('identifier', '==', c).limit(1).get();
+    return snap.empty ? null : withId(snap.docs[0]);
   }
 
   function normalizeIdentifier(code) {
     return String(code || '').trim().toUpperCase();
   }
 
-  function identifierExists(code, exceptId) {
+  async function identifierExists(code, exceptId) {
     var c = normalizeIdentifier(code);
     if (!c) return false;
-    return listAdmins().filter(function (a) {
-      return a.id !== exceptId && normalizeIdentifier(a.identifier) === c;
-    }).length > 0;
+    await ready();
+    var snap = await db().collection(COLLECTIONS.admins).where('identifier', '==', c).get();
+    return snap.docs.some(function (d) { return d.id !== exceptId; });
   }
 
   function makeIdentifier() {
@@ -201,115 +285,111 @@
     return 'AGT-' + out;
   }
 
-  function validateIdentifier(code, exceptId) {
+  async function validateIdentifier(code, exceptId) {
     var c = normalizeIdentifier(code);
     if (!/^AGT-[A-Z0-9]{4,20}$/.test(c)) {
       throw new Error('Identifier must look like AGT-XXXX (letters and numbers)');
     }
-    if (identifierExists(c, exceptId)) throw new Error('That identifier is already in use');
+    if (await identifierExists(c, exceptId)) throw new Error('That identifier is already in use');
     return c;
   }
 
-  function nextIdentifier() {
+  async function nextIdentifier() {
     var code = makeIdentifier();
     var guard = 0;
-    while (identifierExists(code) && guard++ < 50) code = makeIdentifier();
+    while (await identifierExists(code) && guard++ < 50) code = makeIdentifier();
     return code;
   }
 
-  function createAdmin(data) {
+  async function createAdmin(data) {
+    await ready();
     var name = String(data.name || '').trim();
     var email = normalizeEmail(data.email);
     var password = String(data.password || '');
     if (!name) throw new Error('Name is required');
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('A valid email is required');
     if (password.length < 6) throw new Error('Password must be at least 6 characters');
-    if (findAdminByEmail(email)) throw new Error('An admin with that email already exists');
+    if (await findAdminByEmail(email)) throw new Error('An admin with that email already exists');
 
-    var admins = listAdmins();
+    var id = uid('adm_');
     var admin = {
-      id: uid('adm_'),
+      id: id,
       name: name,
       email: email,
       pass: hash(password),
       role: data.role === 'super' ? 'super' : 'admin',
-      identifier: data.identifier ? validateIdentifier(data.identifier, null) : nextIdentifier(),
+      identifier: data.identifier ? await validateIdentifier(data.identifier, null) : await nextIdentifier(),
       phone: String(data.phone || '').trim(),
       createdBy: data.createdBy || null,
       createdAt: nowIso()
     };
-    admins.push(admin);
-    write(KEYS.admins, admins);
+    await db().collection(COLLECTIONS.admins).doc(id).set(admin);
     return admin;
   }
 
-  function updateAdmin(id, patch) {
-    var admins = listAdmins();
-    for (var i = 0; i < admins.length; i++) {
-      if (admins[i].id === id) {
-        var clean = Object.assign({}, patch);
-        delete clean.id;
-        delete clean.pass;
-        if (patch.password) {
-          if (String(patch.password).length < 6) throw new Error('Password must be at least 6 characters');
-          admins[i].pass = hash(patch.password);
-        }
-        delete clean.password;
-        if (patch.identifier != null) clean.identifier = validateIdentifier(patch.identifier, id);
-        Object.assign(admins[i], clean);
-        write(KEYS.admins, admins);
-        return admins[i];
-      }
+  async function updateAdmin(id, patch) {
+    await ready();
+    var existing = await getAdmin(id);
+    if (!existing) throw new Error('Admin not found');
+    var clean = Object.assign({}, patch);
+    delete clean.id;
+    delete clean.pass;
+    if (patch.password) {
+      if (String(patch.password).length < 6) throw new Error('Password must be at least 6 characters');
+      clean.pass = hash(patch.password);
     }
-    throw new Error('Admin not found');
+    delete clean.password;
+    if (patch.identifier != null) clean.identifier = await validateIdentifier(patch.identifier, id);
+    await db().collection(COLLECTIONS.admins).doc(id).set(clean, { merge: true });
+    return Object.assign({}, existing, clean);
   }
 
-  function deleteAdmin(id) {
-    var admins = listAdmins();
-    var target = getAdmin(id);
+  async function deleteAdmin(id) {
+    await ready();
+    var target = await getAdmin(id);
     if (target && target.role === 'super') throw new Error('The super admin cannot be deleted');
-    write(KEYS.admins, admins.filter(function (a) { return a.id !== id; }));
+    await db().collection(COLLECTIONS.admins).doc(id).delete();
   }
 
-  function verifyLogin(email, password) {
-    var admin = findAdminByEmail(email);
+  async function verifyLogin(email, password) {
+    var admin = await findAdminByEmail(email);
     if (!admin) return null;
     if (admin.pass !== hash(String(password || ''))) return null;
     return admin;
   }
 
   // ------------------------------------------------------------------
-  // Session
+  // Session (per-browser)
   // ------------------------------------------------------------------
   function setSession(adminId) {
-    write(KEYS.session, { adminId: adminId, at: nowIso() });
+    writeLocal(LOCAL_KEYS.session, { adminId: adminId, at: nowIso() });
   }
 
-  function getSession() {
-    var s = read(KEYS.session, null);
+  async function getSession() {
+    var s = readLocal(LOCAL_KEYS.session, null);
     if (!s || !s.adminId) return null;
     return getAdmin(s.adminId);
   }
 
   function clearSession() {
-    global.localStorage.removeItem(KEYS.session);
+    removeLocal(LOCAL_KEYS.session);
   }
 
   // ------------------------------------------------------------------
-  // Identification (used by the client site to tie actions to an admin)
+  // Identification (client site ties actions to an admin)
   // ------------------------------------------------------------------
   function setIdent(adminId) {
-    write(KEYS.ident, { adminId: adminId, at: nowIso() });
+    writeLocal(LOCAL_KEYS.ident, { adminId: adminId, at: nowIso() });
   }
 
-  function getIdent() {
-    var s = read(KEYS.ident, null);
+  async function getIdent() {
+    var s = readLocal(LOCAL_KEYS.ident, null);
     if (!s || !s.adminId) return null;
     return getAdmin(s.adminId);
   }
 
   function clearIdent() {
-    global.localStorage.removeItem(KEYS.ident);
+    removeLocal(LOCAL_KEYS.ident);
   }
 
   // ------------------------------------------------------------------
@@ -328,18 +408,23 @@
   // ------------------------------------------------------------------
   // Events
   // ------------------------------------------------------------------
-  function listEvents(admin) {
-    var events = read(KEYS.events, []);
-    events.sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+  async function listEvents(admin) {
+    await ready();
+    var snap = await db().collection(COLLECTIONS.events).get();
+    var events = snap.docs.map(withId);
+    events.sort(byCreatedDesc);
     return admin ? scopeRecords(admin, events) : events;
   }
 
-  function getEvent(id) {
-    return read(KEYS.events, []).filter(function (e) { return e.id === id; })[0] || null;
+  async function getEvent(id) {
+    await ready();
+    if (!id) return null;
+    var doc = await db().collection(COLLECTIONS.events).doc(id).get();
+    return doc.exists ? withId(doc) : null;
   }
 
-  function createEvent(admin, data) {
-    var events = read(KEYS.events, []);
+  async function createEvent(admin, data) {
+    await ready();
     var tickets = Array.isArray(data.tickets) ? data.tickets : [];
     var event = {
       id: uid('evt_'),
@@ -360,48 +445,51 @@
       createdAt: nowIso()
     };
     if (!event.name) throw new Error('Event name is required');
-    events.unshift(event);
-    write(KEYS.events, events);
+    await db().collection(COLLECTIONS.events).doc(event.id).set(event);
     return event;
   }
 
-  function updateEvent(id, patch) {
-    var events = read(KEYS.events, []);
-    for (var i = 0; i < events.length; i++) {
-      if (events[i].id === id) {
-        Object.assign(events[i], patch);
-        write(KEYS.events, events);
-        return events[i];
-      }
-    }
-    throw new Error('Event not found');
+  async function updateEvent(id, patch) {
+    await ready();
+    var existing = await getEvent(id);
+    if (!existing) throw new Error('Event not found');
+    await db().collection(COLLECTIONS.events).doc(id).set(patch, { merge: true });
+    return Object.assign({}, existing, patch);
   }
 
-  function deleteEvent(id) {
-    var events = read(KEYS.events, []);
-    write(KEYS.events, events.filter(function (e) { return e.id !== id; }));
+  async function deleteEvent(id) {
+    await ready();
+    await db().collection(COLLECTIONS.events).doc(id).delete();
   }
 
   // ------------------------------------------------------------------
   // Orders / tickets
   // ------------------------------------------------------------------
-  function listOrders(admin) {
-    var orders = read(KEYS.orders, []);
-    orders.sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+  async function listOrders(admin) {
+    await ready();
+    var snap = await db().collection(COLLECTIONS.orders).get();
+    var orders = snap.docs.map(withId);
+    orders.sort(byCreatedDesc);
     return admin ? scopeRecords(admin, orders) : orders;
   }
 
-  function getOrder(id) {
-    return read(KEYS.orders, []).filter(function (o) { return o.id === id; })[0] || null;
+  async function getOrder(id) {
+    await ready();
+    if (!id) return null;
+    var doc = await db().collection(COLLECTIONS.orders).doc(id).get();
+    return doc.exists ? withId(doc) : null;
   }
 
-  function getOrderByToken(tok) {
-    return read(KEYS.orders, []).filter(function (o) { return o.token === tok; })[0] || null;
+  async function getOrderByToken(tok) {
+    await ready();
+    if (!tok) return null;
+    var snap = await db().collection(COLLECTIONS.orders).where('token', '==', tok).limit(1).get();
+    return snap.empty ? null : withId(snap.docs[0]);
   }
 
-  function createOrder(admin, data) {
-    var orders = read(KEYS.orders, []);
-    var event = getEvent(data.eventId);
+  async function createOrder(admin, data) {
+    await ready();
+    var event = await getEvent(data.eventId);
     if (!event) throw new Error('Event not found');
     var order = {
       id: 'TM-' + Date.now().toString(36).toUpperCase().slice(-6) + Math.floor(Math.random() * 90 + 10),
@@ -427,73 +515,75 @@
     };
     if (!order.clientName) throw new Error('Client name is required');
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(order.clientEmail)) throw new Error('A valid client email is required');
-    orders.unshift(order);
-    write(KEYS.orders, orders);
+    await db().collection(COLLECTIONS.orders).doc(order.id).set(order);
     return order;
   }
 
-  function updateOrder(id, patch) {
-    var orders = read(KEYS.orders, []);
-    for (var i = 0; i < orders.length; i++) {
-      if (orders[i].id === id) {
-        Object.assign(orders[i], patch);
-        write(KEYS.orders, orders);
-        return orders[i];
-      }
-    }
-    throw new Error('Order not found');
+  async function updateOrder(id, patch) {
+    await ready();
+    var existing = await getOrder(id);
+    if (!existing) throw new Error('Order not found');
+    await db().collection(COLLECTIONS.orders).doc(id).set(patch, { merge: true });
+    return Object.assign({}, existing, patch);
   }
 
-  function deleteOrder(id) {
-    write(KEYS.orders, read(KEYS.orders, []).filter(function (o) { return o.id !== id; }));
+  async function deleteOrder(id) {
+    await ready();
+    await db().collection(COLLECTIONS.orders).doc(id).delete();
   }
 
-  function confirmOrder(tok, proof) {
-    var orders = read(KEYS.orders, []);
-    for (var i = 0; i < orders.length; i++) {
-      if (orders[i].token === tok) {
-        orders[i].status = 'confirmed';
-        orders[i].confirmedAt = nowIso();
-        if (proof) {
-          orders[i].proof = proof.dataUrl;
-          orders[i].proofName = proof.name || '';
-          orders[i].proofUploadedAt = nowIso();
-        }
-        write(KEYS.orders, orders);
-        return orders[i];
-      }
-    }
-    return null;
-  }
-
-  function attachProof(id, proof) {
-    return updateOrder(id, {
-      proof: proof.dataUrl,
+  // Proof images are uploaded elsewhere (e.g. Cloudinary); we only persist the
+  // resulting URL plus metadata. `proof` may be { url } or a legacy { dataUrl }.
+  function proofPatch(proof) {
+    return {
+      proof: proof.url || proof.dataUrl || '',
       proofName: proof.name || '',
       proofUploadedAt: nowIso()
-    });
+    };
   }
 
-  function rejectOrder(tok, proof) {
-    var orders = read(KEYS.orders, []);
-    for (var i = 0; i < orders.length; i++) {
-      if (orders[i].token === tok) {
-        orders[i].status = 'rejected';
-        orders[i].rejectedAt = nowIso();
-        if (proof) {
-          orders[i].proof = proof.dataUrl;
-          orders[i].proofName = proof.name || '';
-          orders[i].proofUploadedAt = nowIso();
-        }
-        write(KEYS.orders, orders);
-        return orders[i];
-      }
-    }
-    return null;
+  async function confirmOrder(tok, proof) {
+    await ready();
+    var order = await getOrderByToken(tok);
+    if (!order) return null;
+    var patch = { status: 'confirmed', confirmedAt: nowIso() };
+    if (proof) Object.assign(patch, proofPatch(proof));
+    await db().collection(COLLECTIONS.orders).doc(order.id).set(patch, { merge: true });
+    return Object.assign({}, order, patch);
+  }
+
+  async function attachProof(id, proof) {
+    return updateOrder(id, proofPatch(proof));
+  }
+
+  async function rejectOrder(tok, proof) {
+    await ready();
+    var order = await getOrderByToken(tok);
+    if (!order) return null;
+    var patch = { status: 'rejected', rejectedAt: nowIso() };
+    if (proof) Object.assign(patch, proofPatch(proof));
+    await db().collection(COLLECTIONS.orders).doc(order.id).set(patch, { merge: true });
+    return Object.assign({}, order, patch);
   }
 
   // ------------------------------------------------------------------
-  // Base URL + confirmation link + email stub
+  // Live updates (client site)
+  // ------------------------------------------------------------------
+  function watchEvents(callback) {
+    var unsub = function () {};
+    ready().then(function () {
+      if (!db()) return;
+      unsub = db().collection(COLLECTIONS.events).onSnapshot(function (snap) {
+        var events = snap.docs.map(withId);
+        events.sort(byCreatedDesc);
+        callback(events);
+      });
+    });
+    return function () { unsub(); };
+  }
+
+  // ------------------------------------------------------------------
+  // Base URL + confirmation link + email
   // ------------------------------------------------------------------
   function baseUrl() {
     var href = global.location.href.split('#')[0].split('?')[0];
@@ -508,49 +598,146 @@
     return baseUrl() + 'confirm.html?token=' + encodeURIComponent(tok);
   }
 
-  /*
-   * Email stub. When you wire up real email sending, call your API here and
-   * pass this HTML as the body. The adminCode is embedded in the payload so
-   * you can trace which agent created the order, but it is NOT rendered in
-   * the client-facing HTML below.
-   */
+  function parseSeatList(str) {
+    if (!str) return [];
+    return String(str).split(';').map(function (chunk) {
+      var p = chunk.trim().split(/\s+/);
+      return { section: p[0] || '', row: p[1] || '', seat: p[2] || '' };
+    }).filter(function (t) { return t.section || t.row || t.seat; });
+  }
+
   function buildEmail(order, event, admin) {
     var link = confirmLink(order.token);
-    var subject = 'Confirm your tickets \u2013 ' + (event ? event.name : 'Your event');
+    var eventName = event ? event.name : 'Your event';
+    var place = event ? [event.venue, event.location].filter(Boolean).join(', ') : '';
+    var subject = 'We\u2019ve sent you tickets for ' + eventName + (place ? ' \u2013 ' + place : '');
     var when = event ? formatDate(event.starts) : '';
-    var where = event ? [event.venue, event.location].filter(Boolean).join(', ') : '';
+    var img = event ? event.image : '';
+    var tickets = parseSeatList(order.seats);
+    var qty = order.quantity || tickets.length || 1;
+
+    var logoSvg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 120 120">' +
+      '<rect width="120" height="120" fill="none"/>' +
+      '<rect x="8" y="8" width="104" height="104" rx="20" fill="#1a73e8"/>' +
+      '<text x="60" y="82" font-family="Arial,Helvetica,sans-serif" font-size="64" font-weight="700" fill="#ffffff" text-anchor="middle">t</text>' +
+      '</svg>';
+    var logoB64 = 'data:image/svg+xml;base64,' + (typeof btoa !== 'undefined' ? btoa(logoSvg) : '');
+
+    var eventCard =
+      '<div style="border:1px solid #e5e7eb;border-radius:0;overflow:hidden;margin:0 0 16px">' +
+      '<div style="height:180px;background-size:cover;background-position:center;background-color:#e5e7eb;background-image:url(\'' + esc(img) + '\')"></div>' +
+      '<div style="background:#000;padding:10px 12px">' +
+      '<div style="font-size:10px;font-weight:700;letter-spacing:0.4px;color:#fff;margin-bottom:3px">' + esc(when) + '</div>' +
+      '<div style="font-size:14px;font-weight:700;color:#fff;line-height:1.2;margin-bottom:6px">' + esc(eventName) + '</div>' +
+      '<div style="width:18px;height:2px;background:#4b5563;border-radius:0;margin:0 0 6px"></div>' +
+      '<div style="font-size:11px;color:#9ca3af">' + esc(place) + '</div>' +
+      '</div></div>';
+
+    var qtyLabel = qty + ' Ticket' + (qty !== 1 ? 's' : '');
+
+    var ticketRows = tickets.map(function (t) {
+      return '<table style="border-collapse:collapse;border:1px solid #e5e7eb;border-radius:0;margin:0 0 8px;width:100%">' +
+        '<tr>' +
+        '<td colspan="3" style="padding:10px 14px;border-bottom:1px solid #e5e7eb">' +
+        '<div style="font-size:13px;font-weight:700;color:#111827">Standard Ticket</div>' +
+        '</td>' +
+        '</tr>' +
+        '<tr>' +
+        '<td style="padding:10px 14px;border-right:1px solid #e5e7eb">' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;color:#9ca3af;margin-bottom:3px">SEC</div>' +
+        '<div style="font-size:13px;font-weight:600;color:#111827">' + esc(t.section) + '</div>' +
+        '</td>' +
+        '<td style="padding:10px 14px;border-right:1px solid #e5e7eb">' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;color:#9ca3af;margin-bottom:3px">ROW</div>' +
+        '<div style="font-size:13px;font-weight:600;color:#111827">' + esc(t.row) + '</div>' +
+        '</td>' +
+        '<td style="padding:10px 14px">' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;color:#9ca3af;margin-bottom:3px">SEAT</div>' +
+        '<div style="font-size:13px;font-weight:600;color:#111827">' + esc(t.seat) + '</div>' +
+        '</td>' +
+        '</tr>' +
+        '</table>';
+    }).join('');
+
+    if (!tickets.length) {
+      ticketRows =
+        '<div style="border:1px solid #e5e7eb;border-radius:0;padding:12px 14px;margin:0 0 8px">' +
+        '<div style="font-size:13px;font-weight:700;color:#111827;margin-bottom:6px">Standard Ticket</div>' +
+        '<div style="font-size:13px;color:#6b7280">' + esc(order.seats || qty + ' ticket(s)') + '</div>' +
+        '</div>';
+    }
+
     var html =
-      '<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#111827">' +
-      '<div style="background:#000;color:#fff;padding:18px 22px;font-size:20px;font-weight:700">' + esc(event ? event.name : 'Your tickets') + '</div>' +
-      '<div style="padding:22px">' +
-      '<p>Hi ' + esc(order.clientName) + ',</p>' +
-      '<p>Your ticket order <strong>' + order.id + '</strong> is ready. Please review the details, then confirm or decline your tickets.</p>' +
-      '<table style="border-collapse:collapse;margin:18px 0">' +
-      '<tr><td style="padding:4px 12px 4px 0;color:#6b7280">Date</td><td style="padding:4px 0;font-weight:700">' + when + '</td></tr>' +
-      '<tr><td style="padding:4px 12px 4px 0;color:#6b7280">Venue</td><td style="padding:4px 0;font-weight:700">' + where + '</td></tr>' +
-      '<tr><td style="padding:4px 12px 4px 0;color:#6b7280">Seats</td><td style="padding:4px 0;font-weight:700">' + (order.seats || (order.quantity + ' ticket(s)')) + '</td></tr>' +
-      '<tr><td style="padding:4px 12px 4px 0;color:#6b7280">Quantity</td><td style="padding:4px 0;font-weight:700">' + order.quantity + '</td></tr>' +
-      '</table>' +
-      '<p><a href="' + link + '" style="display:inline-block;background:#1a73e8;color:#fff;text-decoration:none;padding:12px 26px;border-radius:8px;font-weight:700">Confirm tickets</a></p>' +
-      '<p style="color:#6b7280;font-size:13px">If the button does not work, copy this link into your browser:<br>' + link + '</p>' +
+      '<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#111827;background:#f4f6fb;padding:16px">' +
+
+      /* Header card */
+      '<div style="border:1px solid #e5e7eb;border-radius:0;padding:14px 24px;margin-bottom:4px;text-align:left;background:#ffffff">' +
+      '<table style="border-collapse:collapse;margin:0"><tr>' +
+      '<td style="vertical-align:middle;padding-right:10px">' +
+      (logoB64 ? '<img src="' + logoB64 + '" alt="" width="36" height="36" style="display:block;border-radius:0">' : '') +
+      '</td>' +
+      '<td style="vertical-align:middle;font-size:18px;font-weight:700;color:#111827">Ticketmaster</td>' +
+      '</tr></table>' +
       '</div>' +
-      '<div style="padding:14px 22px;background:#f3f4f6;color:#9ca3af;font-size:12px">You received this email because a ticket was issued to you.</div>' +
+
+      /* Body card */
+      '<div style="border:1px solid #e5e7eb;border-radius:0;padding:24px;margin-bottom:4px;background:#ffffff">' +
+      '<p style="margin:0 0 12px;font-size:14px;color:#111827">Hi ' + esc(order.clientName) + ',</p>' +
+      '<p style="margin:0 0 6px;font-size:18px;font-weight:700;color:#111827">We\u2019ve sent you tickets</p>' +
+      '<p style="margin:0 0 20px;font-size:14px;color:#6b7280">View this ticket to see your section, row, seat.</p>' +
+
+      eventCard +
+
+      '<div style="margin:0 0 16px">' +
+      '<div style="font-size:14px;font-weight:700;color:#111827;margin-bottom:8px">' + qtyLabel + '</div>' +
+      ticketRows +
+      '</div>' +
+
+      /* View Tickets bar */
+      '<a href="' + link + '" style="display:block;background:#1a73e8;color:#ffffff;text-decoration:none;padding:14px 0;border-radius:0;font-size:14px;font-weight:700;text-align:center;margin:0 0 16px">View Tickets</a>' +
+
+      '<p style="margin:0 0 4px;font-size:13px;color:#6b7280">Sent to <strong style="color:#111827">' + esc(order.clientEmail) + '</strong></p>' +
+      '<p style="margin:0 0 0;font-size:13px;color:#6b7280">Open view ticket to see your seats.</p>' +
+      '</div>' +
+
+      /* Footer card */
+      '<div style="border:1px solid #e5e7eb;border-radius:0;padding:20px 24px;background:#f9fafb;text-align:left">' +
+      '<table style="border-collapse:collapse;margin:0"><tr>' +
+      '<td style="vertical-align:middle;padding-right:8px">' +
+      (logoB64 ? '<img src="' + logoB64 + '" alt="" width="24" height="24" style="display:block;border-radius:0">' : '') +
+      '</td>' +
+      '<td style="vertical-align:middle;font-size:14px;font-weight:700;color:#111827">Ticketmaster</td>' +
+      '</tr></table>' +
+      '<div style="text-align:left;margin-top:10px;font-size:12px;color:#9ca3af">' +
+      '<a href="#" style="color:#6b7280;text-decoration:none">Help</a>' +
+      ' <span style="color:#d1d5db">|</span> ' +
+      '<a href="#" style="color:#6b7280;text-decoration:none">Terms of Use</a>' +
+      ' <span style="color:#d1d5db">|</span> ' +
+      '<a href="#" style="color:#6b7280;text-decoration:none">Privacy</a>' +
+      '</div>' +
+      '<div style="text-align:left;margin-top:8px;font-size:12px;color:#9ca3af">This email was sent by Ticketmaster. \u00a9 All rights reserved</div>' +
+      '</div>' +
+
       '</div>';
+
     return { subject: subject, html: html, link: link, agent: admin ? admin.identifier : '' };
   }
 
   // ------------------------------------------------------------------
   // Stats
   // ------------------------------------------------------------------
-  function stats(admin) {
-    var orders = listOrders(admin);
-    var events = listEvents(admin);
+  async function stats(admin) {
+    var orders = await listOrders(admin);
+    var events = await listEvents(admin);
+    var priceById = {};
+    events.forEach(function (e) { priceById[e.id] = e.price || 0; });
     var confirmed = orders.filter(function (o) { return o.status === 'confirmed'; });
     var pending = orders.filter(function (o) { return o.status === 'pending'; });
     var proofs = orders.filter(function (o) { return !!o.proof; });
     var revenue = confirmed.reduce(function (sum, o) {
-      var ev = getEvent(o.eventId);
-      return sum + (ev ? ev.price * o.quantity : 0);
+      var price = priceById[o.eventId];
+      return sum + (price != null ? price * o.quantity : 0);
     }, 0);
     return {
       events: events.length,
@@ -563,11 +750,11 @@
   }
 
   global.TMStore = {
-    KEYS: KEYS,
-    init: init,
+    ready: ready,
     money: money,
     formatDate: formatDate,
     nowIso: nowIso,
+    uploadImage: uploadImage,
 
     listAdmins: listAdmins,
     getAdmin: getAdmin,
@@ -590,6 +777,7 @@
     createEvent: createEvent,
     updateEvent: updateEvent,
     deleteEvent: deleteEvent,
+    watchEvents: watchEvents,
 
     listOrders: listOrders,
     getOrder: getOrder,
@@ -605,6 +793,4 @@
     buildEmail: buildEmail,
     stats: stats
   };
-
-  init();
 })(window);

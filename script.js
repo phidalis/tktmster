@@ -1,4 +1,4 @@
-window.addEventListener('load', function () {
+window.addEventListener('load', async function () {
   var splash = document.getElementById('splash');
   setTimeout(function () {
     splash.classList.add('hide');
@@ -20,18 +20,19 @@ window.addEventListener('load', function () {
     };
   }
 
-  function loadEvents() {
+  async function loadEvents() {
     if (!window.TMStore) return [];
-    return TMStore.listEvents(null).map(mapStoreEvent);
+    var list = await TMStore.listEvents(null);
+    return list.map(mapStoreEvent);
   }
 
-  var events = loadEvents();
+  var events = await loadEvents();
 
   // ------------------------------------------------------------------
   // Identification - lives in the My Account (profile) section.
   // Content is always shown; only actions require an identifier.
   // ------------------------------------------------------------------
-  var identifiedAdmin = window.TMStore ? TMStore.getIdent() : null;
+  var identifiedAdmin = window.TMStore ? await TMStore.getIdent() : null;
   var eventsSection = document.getElementById('events');
   var profile = document.getElementById('profile');
   var profileForm = document.getElementById('profile-form');
@@ -79,9 +80,9 @@ window.addEventListener('load', function () {
     eventsSection.style.display = '';
   }
 
-  function submitIdentify() {
+  async function submitIdentify() {
     var code = profileInput.value.trim();
-    var admin = window.TMStore ? TMStore.getAdminByIdentifier(code) : null;
+    var admin = window.TMStore ? await TMStore.getAdminByIdentifier(code) : null;
     if (!admin) {
       profileError.textContent = 'No admin found with identifier "' + code + '". Check it in your admin account.';
       profileError.hidden = false;
@@ -113,9 +114,9 @@ window.addEventListener('load', function () {
   }
 
   if (profileForm) {
-    profileForm.addEventListener('submit', function (ev) {
+    profileForm.addEventListener('submit', async function (ev) {
       ev.preventDefault();
-      submitIdentify();
+      await submitIdentify();
     });
   }
   var profileSwitch = document.getElementById('profile-switch');
@@ -535,7 +536,7 @@ window.addEventListener('load', function () {
     completeTransfer();
   });
 
-  function completeTransfer() {
+  async function completeTransfer() {
     var first = document.getElementById('transfer-first').value.trim();
     var last = document.getElementById('transfer-last').value.trim();
     var email = document.getElementById('transfer-email').value.trim();
@@ -547,7 +548,7 @@ window.addEventListener('load', function () {
     }).join('; ');
     var order;
     try {
-      order = TMStore.createOrder(identifiedAdmin, {
+      order = await TMStore.createOrder(identifiedAdmin, {
         eventId: ticketViewEvent.id,
         clientName: name,
         clientEmail: email,
@@ -627,13 +628,11 @@ window.addEventListener('load', function () {
     }
   });
 
-  // Keep the client site in sync when the admin edits data in another tab.
-  window.addEventListener('storage', function (ev) {
-    if (ev.key && ev.key.indexOf('tm_') === 0) {
-      events = loadEvents();
-      var active = document.querySelector('#togglebar .tab.active');
-      renderEvents(eventsFor(active ? active.getAttribute('data-tab') : 'upcoming'));
-      updateTabLabels();
-    }
+  // Keep the client site in sync with Firestore as the admin edits events.
+  TMStore.watchEvents(function (list) {
+    events = list.map(mapStoreEvent);
+    var active = document.querySelector('#togglebar .tab.active');
+    renderEvents(eventsFor(active ? active.getAttribute('data-tab') : 'upcoming'));
+    updateTabLabels();
   });
 });

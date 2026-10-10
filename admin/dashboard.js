@@ -1,5 +1,7 @@
-(function () {
-  var currentAdmin = TMStore.getSession();
+(async function () {
+  await TMStore.ready;
+
+  var currentAdmin = await TMStore.getSession();
   if (!currentAdmin) {
     window.location.replace('login.html');
     return;
@@ -14,6 +16,17 @@
   var currentView = 'overview';
   var orderFilter = 'all';
   var pendingImage = null;
+
+  // Admin cache so table cells can resolve an agent without an async lookup.
+  var admins = [];
+  var adminById = {};
+
+  function refreshAdminCache(list) {
+    admins = list;
+    adminById = {};
+    admins.forEach(function (a) { adminById[a.id] = a; });
+  }
+  refreshAdminCache(await TMStore.listAdmins());
 
   // ------------------------------------------------------------------
   // Helpers
@@ -45,24 +58,11 @@
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
 
-  function readImage(file, cb) {
-    var reader = new FileReader();
-    reader.onload = function () {
-      var img = new Image();
-      img.onload = function () {
-        var max = 1200, w = img.width, h = img.height;
-        if (w > max || h > max) {
-          if (w > h) { h = Math.round(h * max / w); w = max; }
-          else { w = Math.round(w * max / h); h = max; }
-        }
-        var c = document.createElement('canvas');
-        c.width = w; c.height = h;
-        c.getContext('2d').drawImage(img, 0, 0, w, h);
-        cb(c.toDataURL('image/jpeg', 0.72), file.name);
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
+  async function eventMap() {
+    var list = await TMStore.listEvents(currentAdmin);
+    var map = {};
+    list.forEach(function (e) { map[e.id] = e; });
+    return map;
   }
 
   // ------------------------------------------------------------------
@@ -136,10 +136,13 @@
   document.getElementById('add-order-btn').addEventListener('click', openOrderModal);
   document.getElementById('add-admin-btn').addEventListener('click', openAdminModal);
 
-  document.getElementById('logout-btn').addEventListener('click', function () {
+  function doLogout() {
     TMStore.clearSession();
     window.location.replace('login.html');
-  });
+  }
+
+  document.getElementById('logout-btn').addEventListener('click', doLogout);
+  document.getElementById('account-logout').addEventListener('click', doLogout);
 
   function renderActions() {
     var wrap = document.getElementById('view-actions');
@@ -168,22 +171,26 @@
   // ------------------------------------------------------------------
   // Render
   // ------------------------------------------------------------------
-  function updateCounts() {
-    var s = TMStore.stats(currentAdmin);
+  async function updateCounts() {
+    var s = await TMStore.stats(currentAdmin);
     document.getElementById('count-orders').textContent = s.pending;
     document.getElementById('count-confirmed').textContent = s.confirmed;
     document.getElementById('count-proofs').textContent = s.proofs;
   }
 
-  function render() {
-    updateCounts();
-    if (currentView === 'overview') renderOverview();
-    else if (currentView === 'events') renderEvents();
-    else if (currentView === 'orders') renderOrders();
-    else if (currentView === 'confirmed') renderConfirmed();
-    else if (currentView === 'payments') renderPayments();
-    else if (currentView === 'admins') renderAdmins();
-    else if (currentView === 'account') renderAccount();
+  async function render() {
+    try {
+      await updateCounts();
+      if (currentView === 'overview') await renderOverview();
+      else if (currentView === 'events') await renderEvents();
+      else if (currentView === 'orders') await renderOrders();
+      else if (currentView === 'confirmed') await renderConfirmed();
+      else if (currentView === 'payments') await renderPayments();
+      else if (currentView === 'admins') await renderAdmins();
+      else if (currentView === 'account') renderAccount();
+    } catch (e) {
+      toast(e.message || 'Something went wrong', 'error');
+    }
   }
 
   function statusBadge(status) {
@@ -192,7 +199,7 @@
 
   function agentCell(order) {
     if (currentAdmin.role !== 'super') return '';
-    var a = TMStore.getAdmin(order.adminId);
+    var a = adminById[order.adminId];
     return '<td><span class="mono">' + esc(order.adminCode || (a ? a.identifier : '\u2014')) + '</span></td>';
   }
 
@@ -205,8 +212,12 @@
     return '<tr><td colspan="' + cols + '"><div class="empty">' + msg + '</div></td></tr>';
   }
 
-  function renderOverview() {
-    var s = TMStore.stats(currentAdmin);
+  function stat(label, value, cls) {
+    return '<div class="stat"><div class="label">' + label + '</div><div class="value ' + (cls || '') + '">' + value + '</div></div>';
+  }
+
+  async function renderOverview() {
+    var s = await TMStore.stats(currentAdmin);
     var grid = document.getElementById('stat-grid');
     grid.innerHTML =
       stat('Events', s.events, 'blue') +
@@ -215,7 +226,9 @@
       stat('Confirmed', s.confirmed, 'green') +
       stat('Proofs', s.proofs, 'blue');
 
-    var recent = TMStore.listOrders(currentAdmin).slice(0, 6);
+    var all = await TMStore.listOrders(currentAdmin);
+    var recent = all.slice(0, 6);
+    var map = await eventMap();
     var cols = currentAdmin.role === 'super' ? 7 : 6;
     var html = '<table><thead><tr><th>Order</th><th>Client</th><th>Event</th><th>Status</th>' +
       (currentAdmin.role === 'super' ? '<th>Agent</th>' : '') +
@@ -224,7 +237,7 @@
       html += emptyRow(cols, 'No orders yet. Create one to get started.');
     } else {
       recent.forEach(function (o) {
-        var ev = TMStore.getEvent(o.eventId);
+        var ev = map[o.eventId];
         html += '<tr>' +
           '<td class="mono">' + esc(o.id) + '</td>' +
           '<td><div class="cell-title">' + esc(o.clientName) + '</div><div class="cell-sub">' + esc(o.clientEmail) + '</div></td>' +
@@ -240,22 +253,19 @@
     document.getElementById('overview-orders').innerHTML = html;
   }
 
-  function stat(label, value, cls) {
-    return '<div class="stat"><div class="label">' + label + '</div><div class="value ' + (cls || '') + '">' + value + '</div></div>';
-  }
-
   // ------------------------------------------------------------------
   // Events
   // ------------------------------------------------------------------
-  function renderEvents() {
-    var events = TMStore.listEvents(currentAdmin);
+  async function renderEvents() {
+    var events = await TMStore.listEvents(currentAdmin);
+    var orders = await TMStore.listOrders(currentAdmin);
     var wrap = document.getElementById('events-list');
     if (!events.length) {
       wrap.innerHTML = '<div class="panel"><div class="empty">No events yet. Click <strong>New event</strong> to create your first one.</div></div>';
       return;
     }
     wrap.innerHTML = '<div class="event-grid">' + events.map(function (e) {
-      var sold = TMStore.listOrders(currentAdmin).filter(function (o) { return o.eventId === e.id; }).length;
+      var sold = orders.filter(function (o) { return o.eventId === e.id; }).length;
       return '<div class="event-tile">' +
         '<div class="thumb" style="background-image:url(\'' + esc(e.image || '') + '\')"></div>' +
         '<div class="body">' +
@@ -315,17 +325,25 @@
       { label: isEdit ? 'Save changes' : 'Create event', className: '', onClick: function () { saveEvent(isEdit ? event.id : null); } }
     ], true);
 
-    document.getElementById('ev-image-file').addEventListener('change', function (ev) {
+    document.getElementById('ev-image-file').addEventListener('change', async function (ev) {
       var file = ev.target.files[0];
       if (!file) return;
-      readImage(file, function (dataUrl) {
-        pendingImage = dataUrl;
-        document.getElementById('ev-image-url').value = dataUrl.slice(0, 32) + '... (uploaded)';
-      });
+      var urlField = document.getElementById('ev-image-url');
+      urlField.value = 'Uploading\u2026';
+      try {
+        var url = await TMStore.uploadImage(file);
+        pendingImage = url;
+        urlField.value = url;
+        toast('Image uploaded', 'success');
+      } catch (e) {
+        pendingImage = null;
+        urlField.value = '';
+        toast('Image upload failed', 'error');
+      }
     });
   }
 
-  function saveEvent(id) {
+  async function saveEvent(id) {
     var tickets = textToTickets(val('ev-tickets'));
     var data = {
       name: val('ev-name'),
@@ -338,11 +356,11 @@
       order: val('ev-order'),
       tickets: tickets,
       available: val('ev-available') !== '' ? Number(val('ev-available')) : tickets.length,
-      image: pendingImage || (val('ev-image-url').indexOf('... (uploaded)') > -1 ? '' : val('ev-image-url'))
+      image: pendingImage || val('ev-image-url')
     };
     try {
-      if (id) TMStore.updateEvent(id, data);
-      else TMStore.createEvent(currentAdmin, data);
+      if (id) await TMStore.updateEvent(id, data);
+      else await TMStore.createEvent(currentAdmin, data);
       toast(id ? 'Event updated' : 'Event created', 'success');
       closeModal();
       render();
@@ -352,8 +370,9 @@
   // ------------------------------------------------------------------
   // Orders
   // ------------------------------------------------------------------
-  function renderOrders() {
-    var orders = TMStore.listOrders(currentAdmin);
+  async function renderOrders() {
+    var orders = await TMStore.listOrders(currentAdmin);
+    var map = await eventMap();
     if (orderFilter !== 'all') {
       orders = orders.filter(function (o) { return o.status === orderFilter; });
     }
@@ -369,7 +388,7 @@
       html += emptyRow(cols, 'No orders in this view.');
     } else {
       orders.forEach(function (o) {
-        var ev = TMStore.getEvent(o.eventId);
+        var ev = map[o.eventId];
         html += '<tr>' +
           '<td class="mono">' + esc(o.id) + (o.source === 'transfer' ? '<div><span class="badge proof">Transfer</span></div>' : '') + '</td>' +
           '<td><div class="cell-title">' + esc(o.clientName) + '</div><div class="cell-sub">' + esc(o.clientEmail) + '</div></td>' +
@@ -389,8 +408,8 @@
     document.getElementById('orders-list').innerHTML = html;
   }
 
-  function openOrderModal() {
-    var events = TMStore.listEvents(currentAdmin);
+  async function openOrderModal() {
+    var events = await TMStore.listEvents(currentAdmin);
     if (!events.length) { toast('Create an event first.', 'error'); return; }
     var options = events.map(function (e) {
       return '<option value="' + e.id + '">' + esc(e.name) + ' \u2013 ' + esc(TMStore.formatDate(e.starts)) + '</option>';
@@ -410,9 +429,9 @@
 
     openModal('New order', body, [
       { label: 'Cancel', className: 'ghost', onClick: closeModal },
-      { label: 'Create order', className: '', onClick: function () {
+      { label: 'Create order', className: '', onClick: async function () {
         try {
-          var order = TMStore.createOrder(currentAdmin, {
+          var order = await TMStore.createOrder(currentAdmin, {
             eventId: val('or-event'),
             clientName: val('or-name'),
             clientEmail: val('or-email'),
@@ -430,9 +449,9 @@
     ], true);
   }
 
-  function openSendEmail(order) {
-    order = TMStore.getOrder(order.id) || order;
-    var event = TMStore.getEvent(order.eventId);
+  async function openSendEmail(order) {
+    order = (await TMStore.getOrder(order.id)) || order;
+    var event = await TMStore.getEvent(order.eventId);
     var mail = TMStore.buildEmail(order, event, currentAdmin);
     var body =
       '<p class="cell-sub" style="margin-bottom:14px">Email sending will be connected later. For now this is the message that will be delivered to the client. Use the link to confirm on their behalf.</p>' +
@@ -447,8 +466,8 @@
 
     openModal('Send ticket email', body, [
       { label: 'Close', className: 'ghost', onClick: closeModal },
-      { label: order.sentAt ? 'Mark sent again' : 'Mark as sent', className: '', onClick: function () {
-        TMStore.updateOrder(order.id, { sentAt: TMStore.nowIso() });
+      { label: order.sentAt ? 'Mark sent again' : 'Mark as sent', className: '', onClick: async function () {
+        await TMStore.updateOrder(order.id, { sentAt: TMStore.nowIso() });
         toast('Confirmation marked as sent', 'success');
         closeModal();
         render();
@@ -468,9 +487,9 @@
     return '<div class="detail-row"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>';
   }
 
-  function openOrderDetail(order) {
-    order = TMStore.getOrder(order.id) || order;
-    var event = TMStore.getEvent(order.eventId);
+  async function openOrderDetail(order) {
+    order = (await TMStore.getOrder(order.id)) || order;
+    var event = await TMStore.getEvent(order.eventId);
     var body =
       '<div class="detail-list">' +
       detailRow('Order number', '<span class="mono">' + esc(order.id) + '</span>') +
@@ -497,16 +516,16 @@
       '<input id="proof-input" type="file" accept="image/*" hidden>';
 
     var buttons = [];
-    buttons.push({ label: 'Delete', className: 'danger', onClick: function () {
-      if (confirm('Delete this order permanently?')) { TMStore.deleteOrder(order.id); toast('Order deleted'); closeModal(); render(); }
+    buttons.push({ label: 'Delete', className: 'danger', onClick: async function () {
+      if (confirm('Delete this order permanently?')) { await TMStore.deleteOrder(order.id); toast('Order deleted'); closeModal(); render(); }
     } });
     if (order.status === 'pending') {
-      buttons.push({ label: 'Cancel order', className: 'ghost', onClick: function () {
-        TMStore.updateOrder(order.id, { status: 'cancelled' });
+      buttons.push({ label: 'Cancel order', className: 'ghost', onClick: async function () {
+        await TMStore.updateOrder(order.id, { status: 'cancelled' });
         toast('Order cancelled'); closeModal(); render();
       } });
-      buttons.push({ label: 'Confirm now', className: 'ghost', onClick: function () {
-        TMStore.confirmOrder(order.token, null);
+      buttons.push({ label: 'Confirm now', className: 'ghost', onClick: async function () {
+        await TMStore.confirmOrder(order.token, null);
         toast('Order confirmed', 'success'); closeModal(); render();
       } });
     }
@@ -520,20 +539,26 @@
     if (drop) {
       drop.addEventListener('click', function () { input.click(); });
     }
-    input.addEventListener('change', function (ev) {
+    input.addEventListener('change', async function (ev) {
       var file = ev.target.files[0];
       if (!file) return;
-      readImage(file, function (dataUrl, name) {
-        TMStore.attachProof(order.id, { dataUrl: dataUrl, name: name });
+      var drop = document.getElementById('proof-drop');
+      if (drop) drop.textContent = 'Uploading\u2026';
+      try {
+        var url = await TMStore.uploadImage(file);
+        await TMStore.attachProof(order.id, { url: url, name: file.name });
         toast('Proof uploaded', 'success');
         closeModal();
         render();
-      });
+      } catch (e) {
+        if (drop) drop.textContent = 'Upload failed \u2013 click to try again';
+        toast('Upload failed', 'error');
+      }
     });
   }
 
-  function viewProof(order) {
-    order = TMStore.getOrder(order.id) || order;
+  async function viewProof(order) {
+    order = (await TMStore.getOrder(order.id)) || order;
     var body = '<img src="' + order.proof + '" style="width:100%;border-radius:12px;border:1px solid #e5e7eb" alt="Proof of payment">' +
       '<div class="cell-sub" style="margin-top:10px">' + esc(order.proofName || 'Uploaded ' + TMStore.formatDate(order.proofUploadedAt)) + '</div>';
     openModal('Proof \u2013 ' + order.id, body, [{ label: 'Close', className: '', onClick: closeModal }], true);
@@ -542,8 +567,9 @@
   // ------------------------------------------------------------------
   // Confirmed
   // ------------------------------------------------------------------
-  function renderConfirmed() {
-    var orders = TMStore.listOrders(currentAdmin).filter(function (o) { return o.status === 'confirmed'; });
+  async function renderConfirmed() {
+    var orders = (await TMStore.listOrders(currentAdmin)).filter(function (o) { return o.status === 'confirmed'; });
+    var map = await eventMap();
     document.getElementById('confirmed-sub').textContent = currentAdmin.role === 'super'
       ? 'Everyone\u2019s confirmed orders.'
       : 'Orders your clients have confirmed.';
@@ -555,7 +581,7 @@
       html += emptyRow(cols, 'No confirmed tickets yet. Confirmed client orders will appear here.');
     } else {
       orders.forEach(function (o) {
-        var ev = TMStore.getEvent(o.eventId);
+        var ev = map[o.eventId];
         html += '<tr><td class="mono">' + esc(o.id) + '</td>' +
           '<td><div class="cell-title">' + esc(o.clientName) + '</div><div class="cell-sub">' + esc(o.clientEmail) + '</div></td>' +
           '<td>' + esc(ev ? ev.name : 'Deleted event') + '</td>' +
@@ -573,8 +599,9 @@
   // ------------------------------------------------------------------
   // Payments
   // ------------------------------------------------------------------
-  function renderPayments() {
-    var orders = TMStore.listOrders(currentAdmin).filter(function (o) { return !!o.proof; });
+  async function renderPayments() {
+    var orders = (await TMStore.listOrders(currentAdmin)).filter(function (o) { return !!o.proof; });
+    var map = await eventMap();
     var cols = currentAdmin.role === 'super' ? 6 : 5;
     var html = '<table><thead><tr><th>Order</th><th>Client</th><th>Event</th>' +
       (currentAdmin.role === 'super' ? '<th>Agent</th>' : '') +
@@ -583,7 +610,7 @@
       html += emptyRow(cols, 'No payment proofs uploaded yet.');
     } else {
       orders.forEach(function (o) {
-        var ev = TMStore.getEvent(o.eventId);
+        var ev = map[o.eventId];
         html += '<tr><td class="mono">' + esc(o.id) + '</td>' +
           '<td><div class="cell-title">' + esc(o.clientName) + '</div><div class="cell-sub">' + esc(o.clientEmail) + '</div></td>' +
           '<td>' + esc(ev ? ev.name : 'Deleted event') + '</td>' +
@@ -599,12 +626,13 @@
   // ------------------------------------------------------------------
   // Admins
   // ------------------------------------------------------------------
-  function renderAdmins() {
+  async function renderAdmins() {
     if (currentAdmin.role !== 'super') { switchView('overview'); return; }
-    var admins = TMStore.listAdmins();
+    refreshAdminCache(await TMStore.listAdmins());
+    var orders = await TMStore.listOrders(null);
     var html = '<table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Identifier</th><th>Orders</th><th>Created</th><th></th></tr></thead><tbody>';
     admins.forEach(function (a) {
-      var count = TMStore.listOrders(null).filter(function (o) { return o.adminId === a.id; }).length;
+      var count = orders.filter(function (o) { return o.adminId === a.id; }).length;
       html += '<tr>' +
         '<td class="cell-title">' + esc(a.name) + (a.id === currentAdmin.id ? ' <span class="cell-sub">(you)</span>' : '') + '</td>' +
         '<td>' + esc(a.email) + '</td>' +
@@ -632,9 +660,9 @@
       '<p class="cell-sub">The new admin signs in on the same login page with these credentials and only sees the tickets they issue.</p>';
     openModal('New admin', body, [
       { label: 'Cancel', className: 'ghost', onClick: closeModal },
-      { label: 'Create admin', className: '', onClick: function () {
+      { label: 'Create admin', className: '', onClick: async function () {
         try {
-          var admin = TMStore.createAdmin({
+          var admin = await TMStore.createAdmin({
             name: val('ad-name'),
             email: val('ad-email'),
             phone: val('ad-phone'),
@@ -662,12 +690,12 @@
     document.getElementById('acc-password').value = '';
   }
 
-  document.getElementById('account-form').addEventListener('submit', function (ev) {
+  document.getElementById('account-form').addEventListener('submit', async function (ev) {
     ev.preventDefault();
     try {
       var patch = { name: val('acc-name'), phone: val('acc-phone'), identifier: val('acc-identifier') };
       if (val('acc-password')) patch.password = val('acc-password');
-      currentAdmin = TMStore.updateAdmin(currentAdmin.id, patch);
+      currentAdmin = await TMStore.updateAdmin(currentAdmin.id, patch);
       document.getElementById('user-name').textContent = currentAdmin.name;
       toast('Profile updated', 'success');
       renderAccount();
@@ -677,7 +705,7 @@
   // ------------------------------------------------------------------
   // Global delegation
   // ------------------------------------------------------------------
-  document.addEventListener('click', function (ev) {
+  document.addEventListener('click', async function (ev) {
     function find(attr) {
       var node = ev.target;
       while (node && node !== document) {
@@ -687,19 +715,19 @@
       return null;
     }
     var t;
-    if ((t = find('data-detail'))) { openOrderDetail(TMStore.getOrder(t.getAttribute('data-detail'))); return; }
-    if ((t = find('data-send'))) { openSendEmail(TMStore.getOrder(t.getAttribute('data-send'))); return; }
-    if ((t = find('data-proof'))) { viewProof(TMStore.getOrder(t.getAttribute('data-proof'))); return; }
-    if ((t = find('data-edit-event'))) { openEventModal(TMStore.getEvent(t.getAttribute('data-edit-event'))); return; }
+    if ((t = find('data-detail'))) { openOrderDetail(await TMStore.getOrder(t.getAttribute('data-detail'))); return; }
+    if ((t = find('data-send'))) { openSendEmail(await TMStore.getOrder(t.getAttribute('data-send'))); return; }
+    if ((t = find('data-proof'))) { viewProof(await TMStore.getOrder(t.getAttribute('data-proof'))); return; }
+    if ((t = find('data-edit-event'))) { openEventModal(await TMStore.getEvent(t.getAttribute('data-edit-event'))); return; }
     if ((t = find('data-del-event'))) {
       var id = t.getAttribute('data-del-event');
-      if (confirm('Delete this event?')) { TMStore.deleteEvent(id); toast('Event deleted'); render(); }
+      if (confirm('Delete this event?')) { await TMStore.deleteEvent(id); toast('Event deleted'); render(); }
       return;
     }
     if ((t = find('data-del-admin'))) {
       var aid = t.getAttribute('data-del-admin');
       if (confirm('Delete this admin account?')) {
-        try { TMStore.deleteAdmin(aid); toast('Admin deleted'); render(); }
+        try { await TMStore.deleteAdmin(aid); toast('Admin deleted'); render(); }
         catch (e) { toast(e.message, 'error'); }
       }
       return;

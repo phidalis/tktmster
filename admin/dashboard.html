@@ -178,6 +178,9 @@
                 </div>
                 <button class="btn" type="submit">Save changes</button>
               </form>
+              <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--line)">
+                <button class="btn ghost block" id="account-logout">Sign out</button>
+              </div>
             </div>
           </div>
         </section>
@@ -198,6 +201,9 @@
 
   <div class="toast-wrap" id="toasts"></div>
 
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="../firebase.js"></script>
   <script src="../store.js"></script>
   <script src="dashboard.js"></script>
 </body>
