@@ -1,0 +1,45 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSuper() {
+      return signedIn() &&
+        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'super';
+    }
+
+    // Private admin records (contain email/phone/role). Only signed-in admins
+    // may read; only the super admin may create/update/delete.
+    match /admins/{doc} {
+      allow read: if signedIn();
+      allow write: if isSuper();
+    }
+
+    // Public projection of admins (id, name, identifier) so the public client
+    // site can resolve an agent code without reading private records.
+    match /agents/{doc} {
+      allow read: if true;
+      allow write: if isSuper();
+    }
+
+    // Event listings are public; only signed-in admins can change them.
+    match /events/{doc} {
+      allow read: if true;
+      allow write: if signedIn();
+    }
+
+    // The public confirm page reads an order by token and attaches proof/status
+    // without signing in, so orders stay open.
+    match /orders/{doc} {
+      allow read, write: if true;
+    }
+
+    // Deny everything else by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

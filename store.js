@@ -30,8 +30,13 @@
     uploadPreset: 'ticketmaster'
   };
 
+  // Disable the right-click context menu on desktop (non-touch) devices.
+  if (!('ontouchstart' in global)) {
+    global.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
+  }
+
   // ------------------------------------------------------------------
-  // Local (per-browser) storage helpers - session + ident only.
+  // Local (per-browser) storage helpers - ident only.
   // ------------------------------------------------------------------
   function readLocal(key, fallback) {
     try {
