@@ -100,7 +100,7 @@
   // Email sending (Resend backend on Render).
   // Replace EMAIL_API with your Render service URL after deploying server/.
   // ------------------------------------------------------------------
-  var EMAIL_API = 'https://YOUR-RENDER-SERVICE-NAME.onrender.com';
+  var EMAIL_API = 'https://tktmster.onrender.com';
 
   async function sendEmail(to, mail) {
     var base = String(EMAIL_API || '').replace(/\/+$/, '');
