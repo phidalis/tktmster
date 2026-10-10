@@ -453,8 +453,9 @@
     order = (await TMStore.getOrder(order.id)) || order;
     var event = await TMStore.getEvent(order.eventId);
     var mail = TMStore.buildEmail(order, event, currentAdmin);
+    var sending = false;
     var body =
-      '<p class="cell-sub" style="margin-bottom:14px">Email sending will be connected later. For now this is the message that will be delivered to the client. Use the link to confirm on their behalf.</p>' +
+      '<p class="cell-sub" style="margin-bottom:14px">Sends a real confirmation email to the client through the Resend backend.</p>' +
       '<div class="detail-list">' +
       detailRow('To', esc(order.clientName) + ' &lt;' + esc(order.clientEmail) + '&gt;') +
       detailRow('Subject', esc(mail.subject)) +
@@ -466,11 +467,20 @@
 
     openModal('Send ticket email', body, [
       { label: 'Close', className: 'ghost', onClick: closeModal },
-      { label: order.sentAt ? 'Mark sent again' : 'Mark as sent', className: '', onClick: async function () {
-        await TMStore.updateOrder(order.id, { sentAt: TMStore.nowIso() });
-        toast('Confirmation marked as sent', 'success');
-        closeModal();
-        render();
+      { label: order.sentAt ? 'Resend email' : 'Send email', className: '', onClick: async function () {
+        if (sending) return;
+        sending = true;
+        try {
+          await TMStore.sendEmail(order.clientEmail, mail);
+          await TMStore.updateOrder(order.id, { sentAt: TMStore.nowIso() });
+          toast('Email sent to ' + order.clientEmail, 'success');
+          closeModal();
+          render();
+        } catch (e) {
+          toast(e.message, 'error');
+        } finally {
+          sending = false;
+        }
       } }
     ], true);
 
