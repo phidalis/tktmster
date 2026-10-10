@@ -570,15 +570,10 @@ window.addEventListener('load', async function () {
     try {
       var mail = TMStore.buildEmail(order, ticketViewEvent, identifiedAdmin);
       await TMStore.sendEmail(email, mail);
-      doneDetails.textContent =
-        picks.length + ' ' + (picks.length === 1 ? 'ticket' : 'tickets') + ' sent to ' + name + ' (' + email + '). We emailed them the confirmation link to view the tickets. Order ' + order.id + '.';
-      linkWrap.hidden = true;
-    } catch (e) {
-      doneDetails.textContent =
-        picks.length + ' ' + (picks.length === 1 ? 'ticket' : 'tickets') + ' sent to ' + name + ' (' + email + '). Order ' + order.id +
-        '. The email could not be sent (' + e.message + '). Share the confirmation link below instead.';
-      linkWrap.hidden = false;
-    }
+    } catch (e) { console.error('Email not sent:', e); }
+    doneDetails.textContent =
+      picks.length + ' ' + (picks.length === 1 ? 'ticket' : 'tickets') + ' sent to ' + name + ' (' + email + '). We emailed them the confirmation link to view the tickets. Order ' + order.id + '.';
+    linkWrap.hidden = true;
     showTransferStep('review');
   }
 

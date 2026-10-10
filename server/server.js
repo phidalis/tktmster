@@ -22,6 +22,14 @@ app.use(function (req, res, next) {
   next();
 });
 
+app.use(function (req, res, next) {
+  var started = Date.now();
+  res.on('finish', function () {
+    console.log('[' + new Date().toISOString() + '] ' + req.method + ' ' + req.originalUrl + ' -> ' + res.statusCode + ' (' + (Date.now() - started) + 'ms)');
+  });
+  next();
+});
+
 app.get('/health', function (req, res) {
   res.json({ ok: true });
 });
@@ -42,25 +50,28 @@ app.post('/api/send-email', async function (req, res) {
     return res.status(500).json({ error: 'RESEND_API_KEY is not set on the server.' });
   }
 
-  try {
-    var response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + apiKey,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ from: from, to: to, subject: subject, html: html })
-    });
-    var data = await response.json();
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: (data && data.message) || 'Resend rejected the email.'
+try {
+      console.log('Sending email to ' + to + ' via Resend...');
+      var response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + apiKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ from: from, to: to, subject: subject, html: html })
       });
+      var data = await response.json();
+      console.log('Resend responded ' + response.status + ' for ' + to);
+      if (!response.ok) {
+        return res.status(response.status).json({
+          error: (data && data.message) || 'Resend rejected the email.'
+        });
+      }
+      return res.json({ ok: true, id: data.id });
+    } catch (err) {
+      console.error('Resend request error: ' + err.message);
+      return res.status(500).json({ error: 'Could not reach Resend: ' + err.message });
     }
-    return res.json({ ok: true, id: data.id });
-  } catch (err) {
-    return res.status(500).json({ error: 'Could not reach Resend: ' + err.message });
-  }
 });
 
 var port = process.env.PORT || 3001;
