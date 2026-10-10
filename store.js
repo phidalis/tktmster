@@ -1,25 +1,26 @@
 /*
  * TMStore - shared data layer.
  *
- * Data (admins, events, orders) lives in Firebase Firestore. The public API
- * is asynchronous: every function that reads or writes Firestore returns a
- * Promise, so callers use `await TMStore.xxx()`.
+ * Data (admins, events, orders) lives in Firebase Firestore. Admin sign-in
+ * uses Firebase Authentication (email/password); an admin's Auth uid is the
+ * document id in the `admins` collection. A public `agents` collection mirrors
+ * just { id, name, identifier } so the public client site can resolve an agent
+ * identifier without reading the private admin records.
  *
- * Session and identification are per-browser state (the signed-in admin id),
- * so they stay in localStorage - only the shared records moved to Firestore.
+ * The public API is asynchronous: every function that reads or writes
+ * Firestore returns a Promise, so callers use `await TMStore.xxx()`.
  *
- * `TMStore.ready` resolves once the app has bootstrapped (including first-run
- * seeding). Every data function awaits it internally, so callers normally do
- * not need to touch it.
+ * `TMStore.ready` resolves once the app has bootstrapped. Every data function
+ * awaits it internally, so callers normally do not need to touch it.
  */
 (function (global) {
   var LOCAL_KEYS = {
-    session: 'tm_session',
     ident: 'tm_ident'
   };
 
   var COLLECTIONS = {
     admins: 'admins',
+    agents: 'agents',
     events: 'events',
     orders: 'orders'
   };
@@ -59,14 +60,6 @@
 
   function token() {
     return uid('tok_') + Math.random().toString(36).slice(2, 8);
-  }
-
-  function hash(str) {
-    var h = 5381;
-    for (var i = 0; i < str.length; i++) {
-      h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
-    }
-    return 'h' + h.toString(16);
   }
 
   function normalizeEmail(email) {
@@ -128,6 +121,10 @@
     return global.db;
   }
 
+  function auth() {
+    return global.firebase && global.firebase.auth ? global.firebase.auth() : null;
+  }
+
   function withId(doc) {
     var data = doc.data() || {};
     if (data.id == null) data.id = doc.id;
@@ -139,99 +136,13 @@
   }
 
   // ------------------------------------------------------------------
-  // Bootstrap / seed
+  // Bootstrap
   // ------------------------------------------------------------------
   var readyPromise = null;
 
   function ready() {
-    if (!readyPromise) readyPromise = init();
+    if (!readyPromise) readyPromise = Promise.resolve();
     return readyPromise;
-  }
-
-  function init() {
-    return (async function () {
-      if (!db()) return;
-      var adminsSnap = await db().collection(COLLECTIONS.admins).limit(1).get();
-      if (!adminsSnap.empty) return;
-
-      var superAdmin = {
-        id: 'adm_super',
-        name: 'Super Admin',
-        email: 'admin@ticketmaster.com',
-        pass: hash('admin123'),
-        role: 'super',
-        identifier: 'AGT-0001',
-        phone: '',
-        createdBy: null,
-        createdAt: nowIso()
-      };
-      await db().collection(COLLECTIONS.admins).doc(superAdmin.id).set(superAdmin);
-
-      var eventsSnap = await db().collection(COLLECTIONS.events).limit(1).get();
-      if (eventsSnap.empty) {
-        var seeds = seedEvents(superAdmin.id);
-        for (var i = 0; i < seeds.length; i++) {
-          await db().collection(COLLECTIONS.events).doc(seeds[i].id).set(seeds[i]);
-        }
-      }
-    })();
-  }
-
-  function seedEvents(adminId) {
-    var base = {
-      adminId: adminId,
-      category: 'Concert',
-      venue: '',
-      price: 0,
-      currency: 'USD',
-      description: '',
-      createdAt: nowIso()
-    };
-    function make(cfg) {
-      var event = Object.assign({}, base, cfg);
-      event.capacity = event.capacity != null ? event.capacity : event.tickets.length;
-      event.available = event.tickets.length;
-      return Object.assign({ id: uid('evt_') }, event);
-    }
-    return [
-      make({
-        name: 'Cross Culture Tour Nairobi',
-        starts: '2026-10-02T19:00:00',
-        location: 'Nairobi, Kenya',
-        order: 'TM-SEED-BTS-CO',
-        image: 'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?auto=format&fit=crop&w=800&q=80',
-        tickets: [
-          { section: '101', row: 'A', seat: '12' },
-          { section: '101', row: 'A', seat: '13' },
-          { section: '101', row: 'B', seat: '07' }
-        ]
-      }),
-      make({
-        name: 'Blankets & Wine Festival',
-        starts: '2026-10-17T14:00:00',
-        location: 'Nairobi, Kenya',
-        order: 'TM-SEED-BTS-BW',
-        image: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?auto=format&fit=crop&w=800&q=80',
-        tickets: [
-          { section: 'GA', row: '1', seat: '21' },
-          { section: 'GA', row: '1', seat: '22' },
-          { section: 'GA', row: '2', seat: '05' },
-          { section: 'GA', row: '2', seat: '06' },
-          { section: 'GA', row: '3', seat: '14' }
-        ]
-      }),
-      make({
-        name: 'Sauti Sol Live Concert',
-        starts: '2026-11-08T18:30:00',
-        location: 'Mombasa, Kenya',
-        order: 'TM-SEED-BTS-SS',
-        image: 'https://images.unsplash.com/photo-1459749411175-04bf5292ceea?auto=format&fit=crop&w=800&q=80',
-        tickets: [
-          { section: 'VIP', row: 'C', seat: '01' },
-          { section: 'VIP', row: 'C', seat: '02' }
-        ]
-      })
-    ];
   }
 
   // ------------------------------------------------------------------
@@ -262,7 +173,7 @@
     await ready();
     var c = String(code || '').trim().toUpperCase();
     if (!c) return null;
-    var snap = await db().collection(COLLECTIONS.admins).where('identifier', '==', c).limit(1).get();
+    var snap = await db().collection(COLLECTIONS.agents).where('identifier', '==', c).limit(1).get();
     return snap.empty ? null : withId(snap.docs[0]);
   }
 
@@ -311,19 +222,32 @@
     if (password.length < 6) throw new Error('Password must be at least 6 characters');
     if (await findAdminByEmail(email)) throw new Error('An admin with that email already exists');
 
-    var id = uid('adm_');
+    var identifier = data.identifier ? await validateIdentifier(data.identifier, null) : await nextIdentifier();
+
+    // Create the Auth account on a secondary app so the current super admin
+    // stays signed in.
+    var fbase = global.firebase;
+    var secondary = fbase.initializeApp(fbase.app().options, 'creator-' + Date.now());
+    var uid;
+    try {
+      var cred = await secondary.auth().createUserWithEmailAndPassword(email, password);
+      uid = cred.user.uid;
+    } finally {
+      await secondary.delete();
+    }
+
     var admin = {
-      id: id,
+      id: uid,
       name: name,
       email: email,
-      pass: hash(password),
       role: data.role === 'super' ? 'super' : 'admin',
-      identifier: data.identifier ? await validateIdentifier(data.identifier, null) : await nextIdentifier(),
+      identifier: identifier,
       phone: String(data.phone || '').trim(),
       createdBy: data.createdBy || null,
       createdAt: nowIso()
     };
-    await db().collection(COLLECTIONS.admins).doc(id).set(admin);
+    await db().collection(COLLECTIONS.admins).doc(uid).set(admin);
+    await db().collection(COLLECTIONS.agents).doc(uid).set({ id: uid, name: name, identifier: identifier });
     return admin;
   }
 
@@ -333,15 +257,20 @@
     if (!existing) throw new Error('Admin not found');
     var clean = Object.assign({}, patch);
     delete clean.id;
-    delete clean.pass;
-    if (patch.password) {
-      if (String(patch.password).length < 6) throw new Error('Password must be at least 6 characters');
-      clean.pass = hash(patch.password);
-    }
+    var password = clean.password;
     delete clean.password;
+    if (password) {
+      if (String(password).length < 6) throw new Error('Password must be at least 6 characters');
+      var user = auth() && auth().currentUser;
+      if (!user || user.uid !== id) throw new Error('You can only change your own password here');
+      await user.updatePassword(password);
+    }
     if (patch.identifier != null) clean.identifier = await validateIdentifier(patch.identifier, id);
     await db().collection(COLLECTIONS.admins).doc(id).set(clean, { merge: true });
-    return Object.assign({}, existing, clean);
+    var updated = Object.assign({}, existing, clean);
+    await db().collection(COLLECTIONS.agents).doc(id).set(
+      { id: id, name: updated.name, identifier: updated.identifier }, { merge: true });
+    return updated;
   }
 
   async function deleteAdmin(id) {
@@ -349,30 +278,44 @@
     var target = await getAdmin(id);
     if (target && target.role === 'super') throw new Error('The super admin cannot be deleted');
     await db().collection(COLLECTIONS.admins).doc(id).delete();
-  }
-
-  async function verifyLogin(email, password) {
-    var admin = await findAdminByEmail(email);
-    if (!admin) return null;
-    if (admin.pass !== hash(String(password || ''))) return null;
-    return admin;
+    await db().collection(COLLECTIONS.agents).doc(id).delete();
   }
 
   // ------------------------------------------------------------------
-  // Session (per-browser)
+  // Authentication (Firebase Auth)
   // ------------------------------------------------------------------
-  function setSession(adminId) {
-    writeLocal(LOCAL_KEYS.session, { adminId: adminId, at: nowIso() });
+  function login(email, password) {
+    return auth().signInWithEmailAndPassword(normalizeEmail(email), String(password || ''))
+      .then(function (cred) {
+        return db().collection(COLLECTIONS.admins).doc(cred.user.uid).get();
+      })
+      .then(function (doc) {
+        if (!doc.exists) {
+          return auth().signOut().then(function () { throw new Error('This account is not an admin'); });
+        }
+        return withId(doc);
+      });
   }
 
-  async function getSession() {
-    var s = readLocal(LOCAL_KEYS.session, null);
-    if (!s || !s.adminId) return null;
-    return getAdmin(s.adminId);
+  function logout() {
+    return auth().signOut();
   }
 
-  function clearSession() {
-    removeLocal(LOCAL_KEYS.session);
+  function currentAdmin() {
+    return new Promise(function (resolve) {
+      var a = auth();
+      if (!a) { resolve(null); return; }
+      var settled = false;
+      var unsub = a.onAuthStateChanged(function (user) {
+        if (settled) return;
+        settled = true;
+        unsub();
+        if (!user) { resolve(null); return; }
+        db().collection(COLLECTIONS.admins).doc(user.uid).get()
+          .then(function (doc) { resolve(doc.exists ? withId(doc) : null); })
+          .catch(function () { resolve(null); });
+      });
+    });
   }
 
   // ------------------------------------------------------------------
@@ -385,7 +328,9 @@
   async function getIdent() {
     var s = readLocal(LOCAL_KEYS.ident, null);
     if (!s || !s.adminId) return null;
-    return getAdmin(s.adminId);
+    await ready();
+    var doc = await db().collection(COLLECTIONS.agents).doc(s.adminId).get();
+    return doc.exists ? withId(doc) : null;
   }
 
   function clearIdent() {
@@ -763,11 +708,11 @@
     createAdmin: createAdmin,
     updateAdmin: updateAdmin,
     deleteAdmin: deleteAdmin,
-    verifyLogin: verifyLogin,
 
-    setSession: setSession,
-    getSession: getSession,
-    clearSession: clearSession,
+    login: login,
+    logout: logout,
+    currentAdmin: currentAdmin,
+
     setIdent: setIdent,
     getIdent: getIdent,
     clearIdent: clearIdent,

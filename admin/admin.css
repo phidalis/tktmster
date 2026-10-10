@@ -83,23 +83,6 @@ input, select, textarea {
   margin-bottom: 24px;
 }
 
-.login-hint {
-  margin-top: 20px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: #f0f6ff;
-  border: 1px solid #d6e4fb;
-  font-size: 12px;
-  color: #334155;
-  line-height: 1.6;
-}
-
-.login-hint code {
-  background: #e2ebfb;
-  padding: 1px 5px;
-  border-radius: 4px;
-}
-
 /* ------------------------------------------------------------------ */
 /* Forms                                                               */
 /* ------------------------------------------------------------------ */

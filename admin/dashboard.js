@@ -1,7 +1,7 @@
 (async function () {
   await TMStore.ready;
 
-  var currentAdmin = await TMStore.getSession();
+  var currentAdmin = await TMStore.currentAdmin();
   if (!currentAdmin) {
     window.location.replace('login.html');
     return;
@@ -137,7 +137,7 @@
   document.getElementById('add-admin-btn').addEventListener('click', openAdminModal);
 
   function doLogout() {
-    TMStore.clearSession();
+    TMStore.logout();
     window.location.replace('login.html');
   }
 
