@@ -2,7 +2,7 @@
  * Service worker - offline-first app shell.
  * Bump CACHE when you deploy new assets to force a re-cache.
  */
-var CACHE = 'tm-v1';
+var CACHE = 'tm-v2';
 
 var APP_SHELL = [
   './',
