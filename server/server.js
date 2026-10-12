@@ -47,6 +47,7 @@ app.post('/api/send-email', async function (req, res) {
   var from = process.env.RESEND_FROM || 'Ticketmaster <onboarding@resend.dev>';
 
   if (!apiKey) {
+    console.error('RESEND_API_KEY is not set on this server - add it in Render -> Environment and redeploy.');
     return res.status(500).json({ error: 'RESEND_API_KEY is not set on the server.' });
   }
 
@@ -61,7 +62,7 @@ try {
         body: JSON.stringify({ from: from, to: to, subject: subject, html: html })
       });
       var data = await response.json();
-      console.log('Resend responded ' + response.status + ' for ' + to);
+      console.log('Resend responded ' + response.status + ' for ' + to + ' : ' + ((data && data.message) || JSON.stringify(data)));
       if (!response.ok) {
         return res.status(response.status).json({
           error: (data && data.message) || 'Resend rejected the email.'

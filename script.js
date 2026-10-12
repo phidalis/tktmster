@@ -129,6 +129,12 @@ window.addEventListener('load', async function () {
       profileInput.focus();
     });
   }
+  var profileOpenAdmin = document.getElementById('profile-open-admin');
+  if (profileOpenAdmin) {
+    profileOpenAdmin.addEventListener('click', function () {
+      window.location.href = 'admin/dashboard.html';
+    });
+  }
   renderProfile();
 
   function formatDate(iso) {

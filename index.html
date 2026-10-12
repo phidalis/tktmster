@@ -3,7 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title></title>
+  <title>Ticketmaster</title>
+  <meta name="description" content="View, transfer and sell event tickets.">
+  <meta name="theme-color" content="#1a73e8">
+  <meta name="application-name" content="Tickets">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Tickets">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -38,6 +48,7 @@
           <div class="profile-row"><span>Name</span><strong id="profile-name"></strong></div>
           <div class="profile-row"><span>Identifier</span><strong id="profile-code" class="profile-code"></strong></div>
           <button id="profile-switch" class="profile-btn ghost" type="button">Switch identifier</button>
+          <button id="profile-open-admin" class="profile-btn" type="button">Open admin</button>
         </div>
         <form id="profile-form" autocomplete="off">
           <p class="profile-lead" id="profile-prompt">Enter your agent identifier to view and transfer tickets. It is the identifier shown in your admin account (for example AGT-0001).</p>
@@ -206,6 +217,13 @@
 
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function () {});
+      });
+    }
+  </script>
   <script src="firebase.js"></script>
   <script src="store.js"></script>
   <script src="script.js"></script>
