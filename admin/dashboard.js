@@ -6,6 +6,12 @@
     window.location.replace('login.html');
     return;
   }
+  if (currentAdmin.suspended) {
+    TMStore.logout();
+    alert('Your account has been suspended. Contact the super admin for help.');
+    window.location.replace('login.html');
+    return;
+  }
 
   var TOASTS = document.getElementById('toasts');
   var modal = document.getElementById('modal');
@@ -640,17 +646,25 @@
     if (currentAdmin.role !== 'super') { switchView('overview'); return; }
     refreshAdminCache(await TMStore.listAdmins());
     var orders = await TMStore.listOrders(null);
-    var html = '<table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Identifier</th><th>Orders</th><th>Created</th><th></th></tr></thead><tbody>';
+    var html = '<table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Identifier</th><th>Orders</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>';
     admins.forEach(function (a) {
       var count = orders.filter(function (o) { return o.adminId === a.id; }).length;
+      var isSuper = a.role === 'super';
+      var controls = '';
+      if (!isSuper) {
+        controls = '<button class="btn ' + (a.suspended ? 'ghost' : 'danger') + ' small" data-' + (a.suspended ? 'unsuspend' : 'suspend') + '-admin="' + a.id + '">' +
+          (a.suspended ? 'Reactivate' : 'Suspend') + '</button> ' +
+          '<button class="btn danger small" data-del-admin="' + a.id + '">Delete</button>';
+      }
       html += '<tr>' +
         '<td class="cell-title">' + esc(a.name) + (a.id === currentAdmin.id ? ' <span class="cell-sub">(you)</span>' : '') + '</td>' +
         '<td>' + esc(a.email) + '</td>' +
         '<td><span class="badge role-' + a.role + '">' + a.role + '</span></td>' +
         '<td class="mono">' + esc(a.identifier) + '</td>' +
         '<td>' + count + '</td>' +
+        '<td>' + (a.suspended ? '<span class="badge rejected">suspended</span>' : '<span class="badge confirmed">active</span>') + '</td>' +
         '<td class="cell-sub">' + esc(TMStore.formatDate(a.createdAt)) + '</td>' +
-        '<td>' + (a.role === 'super' ? '' : '<button class="btn danger small" data-del-admin="' + a.id + '">Delete</button>') + '</td>' +
+        '<td style="white-space:nowrap">' + controls + '</td>' +
         '</tr>';
     });
     html += '</tbody></table>';
@@ -740,6 +754,20 @@
         try { await TMStore.deleteAdmin(aid); toast('Admin deleted'); render(); }
         catch (e) { toast(e.message, 'error'); }
       }
+      return;
+    }
+    if ((t = find('data-suspend-admin'))) {
+      var sid = t.getAttribute('data-suspend-admin');
+      if (confirm('Suspend this admin? They will be signed out and blocked from signing in until reactivated.')) {
+        try { await TMStore.setAdminSuspended(sid, true); toast('Admin suspended'); render(); }
+        catch (e) { toast(e.message, 'error'); }
+      }
+      return;
+    }
+    if ((t = find('data-unsuspend-admin'))) {
+      var uid = t.getAttribute('data-unsuspend-admin');
+      try { await TMStore.setAdminSuspended(uid, false); toast('Admin reactivated'); render(); }
+      catch (e) { toast(e.message, 'error'); }
       return;
     }
   });

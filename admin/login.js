@@ -14,7 +14,11 @@
       await TMStore.login(email, password);
       window.location.href = 'dashboard.html';
     } catch (e) {
-      alert('Invalid email or password.');
+      if (e && e.code === 'account-suspended') {
+        alert('Your account has been suspended. Contact the super admin for help.');
+      } else {
+        alert('Invalid email or password.');
+      }
     }
   });
 })();

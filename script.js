@@ -88,6 +88,11 @@ window.addEventListener('load', async function () {
       profileError.hidden = false;
       return;
     }
+    if (admin.suspended) {
+      profileError.textContent = 'Your account has been suspended. Contact the super admin for help.';
+      profileError.hidden = false;
+      return;
+    }
     identifiedAdmin = admin;
     TMStore.setIdent(admin.id);
     profileInput.value = '';
@@ -136,6 +141,14 @@ window.addEventListener('load', async function () {
     });
   }
   renderProfile();
+
+  if (identifiedAdmin && identifiedAdmin.suspended) {
+    TMStore.clearIdent();
+    identifiedAdmin = null;
+    renderProfile();
+    profileError.textContent = 'Your account has been suspended. Contact the super admin for help.';
+    profileError.hidden = false;
+  }
 
   function formatDate(iso) {
     var d = new Date(iso);

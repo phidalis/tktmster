@@ -270,11 +270,12 @@
       role: data.role === 'super' ? 'super' : 'admin',
       identifier: identifier,
       phone: String(data.phone || '').trim(),
+      suspended: false,
       createdBy: data.createdBy || null,
       createdAt: nowIso()
     };
     await db().collection(COLLECTIONS.admins).doc(uid).set(admin);
-    await db().collection(COLLECTIONS.agents).doc(uid).set({ id: uid, name: name, identifier: identifier });
+    await db().collection(COLLECTIONS.agents).doc(uid).set({ id: uid, name: name, identifier: identifier, suspended: false });
     return admin;
   }
 
@@ -296,8 +297,19 @@
     await db().collection(COLLECTIONS.admins).doc(id).set(clean, { merge: true });
     var updated = Object.assign({}, existing, clean);
     await db().collection(COLLECTIONS.agents).doc(id).set(
-      { id: id, name: updated.name, identifier: updated.identifier }, { merge: true });
+      { id: id, name: updated.name, identifier: updated.identifier, suspended: !!updated.suspended }, { merge: true });
     return updated;
+  }
+
+  async function setAdminSuspended(id, suspended) {
+    await ready();
+    var target = await getAdmin(id);
+    if (!target) throw new Error('Admin not found');
+    if (target.role === 'super') throw new Error('The super admin cannot be suspended');
+    var flag = !!suspended;
+    await db().collection(COLLECTIONS.admins).doc(id).set({ suspended: flag }, { merge: true });
+    await db().collection(COLLECTIONS.agents).doc(id).set({ suspended: flag }, { merge: true });
+    return Object.assign({}, target, { suspended: flag });
   }
 
   async function deleteAdmin(id) {
@@ -320,7 +332,15 @@
         if (!doc.exists) {
           return auth().signOut().then(function () { throw new Error('This account is not an admin'); });
         }
-        return withId(doc);
+        var admin = withId(doc);
+        if (admin.suspended) {
+          return auth().signOut().then(function () {
+            var err = new Error('Your account has been suspended. Contact the super admin for help.');
+            err.code = 'account-suspended';
+            throw err;
+          });
+        }
+        return admin;
       });
   }
 
@@ -726,6 +746,7 @@
     createAdmin: createAdmin,
     updateAdmin: updateAdmin,
     deleteAdmin: deleteAdmin,
+    setAdminSuspended: setAdminSuspended,
 
     login: login,
     logout: logout,
